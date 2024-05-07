@@ -1,79 +1,31 @@
-/*
-Copyright 2022 The Kubernetes Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package main
 
 import (
 	"context"
-	"fmt"
-
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
-	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	frameworktypes "sigs.k8s.io/descheduler/pkg/framework/types"
 )
 
-const LowNodeUtilizationPluginName = "LowNodeUtilization"
+const MyLowNodeUtilizationPluginName = "MyLowNodeUtilization"
 
-// LowNodeUtilization evicts pods from overutilized nodes to underutilized nodes. Note that CPU/Memory requests are used
-// to calculate nodes' utilization and not the actual resource usage.
-
-type LowNodeUtilization struct {
+type MyLowNodeUtilization struct {
 	handle    frameworktypes.Handle
 	args      *LowNodeUtilizationArgs
 	podFilter func(pod *v1.Pod) bool
 }
 
-var _ frameworktypes.BalancePlugin = &LowNodeUtilization{}
-
-// NewLowNodeUtilization builds plugin from its arguments while passing a handle
-func NewLowNodeUtilization(args runtime.Object, handle frameworktypes.Handle) (frameworktypes.Plugin, error) {
-	lowNodeUtilizationArgsArgs, ok := args.(*LowNodeUtilizationArgs)
-	if !ok {
-		return nil, fmt.Errorf("want args to be of type LowNodeUtilizationArgs, got %T", args)
-	}
-
-	podFilter, err := podutil.NewOptions().
-		WithFilter(handle.Evictor().Filter).
-		BuildFilterFunc()
-	if err != nil {
-		return nil, fmt.Errorf("error initializing pod filter function: %v", err)
-	}
-
-	return &LowNodeUtilization{
-		handle:    handle,
-		args:      lowNodeUtilizationArgsArgs,
-		podFilter: podFilter,
-	}, nil
+func (m *MyLowNodeUtilization) Name() string {
+	return MyLowNodeUtilizationPluginName
 }
 
-// Name retrieves the plugin name
-func (l *LowNodeUtilization) Name() string {
-	return LowNodeUtilizationPluginName
-}
-
-// Balance extension point implementation for the plugin
-func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *frameworktypes.Status {
-	useDeviationThresholds := l.args.UseDeviationThresholds
-	thresholds := l.args.Thresholds
-	targetThresholds := l.args.TargetThresholds
+func (m *MyLowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *frameworktypes.Status {
+	useDeviationThresholds := m.args.UseDeviationThresholds
+	thresholds := m.args.Thresholds
+	targetThresholds := m.args.TargetThresholds
 
 	// check if Pods/CPU/Mem are set, if not, set them to 100
 	if _, ok := thresholds[v1.ResourcePods]; !ok {
@@ -103,11 +55,12 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 			targetThresholds[v1.ResourceMemory] = MaxResourcePercentage
 		}
 	}
+
 	resourceNames := getResourceNames(thresholds)
 
 	lowNodes, sourceNodes := classifyNodes(
-		getNodeUsage(nodes, resourceNames, l.handle.GetPodsAssignedToNodeFunc()),
-		getNodeThresholds(nodes, thresholds, targetThresholds, resourceNames, l.handle.GetPodsAssignedToNodeFunc(), useDeviationThresholds),
+		getNodeUsage_(nodes, resourceNames, m.handle.GetPodsAssignedToNodeFunc()),
+		getNodeThresholds(nodes, thresholds, targetThresholds, resourceNames, m.handle.GetPodsAssignedToNodeFunc(), useDeviationThresholds),
 		// The node has to be schedulable (to be able to move workload there)
 		func(node *v1.Node, usage NodeUsage, threshold NodeThresholds) bool {
 			if nodeutil.IsNodeUnschedulable(node) {
@@ -132,6 +85,7 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 			underutilizationCriteria = append(underutilizationCriteria, string(name), int64(thresholds[name]))
 		}
 	}
+
 	klog.V(1).InfoS("Criteria for a node under utilization", underutilizationCriteria...)
 	klog.V(1).InfoS("Number of underutilized nodes", "totalNumber", len(lowNodes))
 
@@ -141,21 +95,24 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 		"Mem", targetThresholds[v1.ResourceMemory],
 		"Pods", targetThresholds[v1.ResourcePods],
 	}
+
 	for name := range targetThresholds {
 		if !nodeutil.IsBasicResource(name) {
 			overutilizationCriteria = append(overutilizationCriteria, string(name), int64(targetThresholds[name]))
 		}
 	}
+
 	klog.V(1).InfoS("Criteria for a node above target utilization", overutilizationCriteria...)
 	klog.V(1).InfoS("Number of overutilized nodes", "totalNumber", len(sourceNodes))
 
+	// source node = overutilized node
 	if len(lowNodes) == 0 {
 		klog.V(1).InfoS("No node is underutilized, nothing to do here, you might tune your thresholds further")
 		return nil
 	}
 
-	if len(lowNodes) <= l.args.NumberOfNodes {
-		klog.V(1).InfoS("Number of nodes underutilized is less or equal than NumberOfNodes, nothing to do here", "underutilizedNodes", len(lowNodes), "numberOfNodes", l.args.NumberOfNodes)
+	if len(lowNodes) <= m.args.NumberOfNodes {
+		klog.V(1).InfoS("Number of nodes underutilized is less or equal than NumberOfNodes, nothing to do here", "underutilizedNodes", len(lowNodes), "numberOfNodes", m.args.NumberOfNodes)
 		return nil
 	}
 
@@ -179,23 +136,23 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 				return false
 			}
 		}
-
 		return true
 	}
-
-	// Sort the nodes by the usage in descending order
 	sortNodesByUsage(sourceNodes, false)
 
 	evictPodsFromSourceNodes(
 		ctx,
-		l.args.EvictableNamespaces,
+		m.args.EvictableNamespaces,
 		sourceNodes,
 		lowNodes,
-		l.handle.Evictor(),
+		m.handle.Evictor(),
 		evictions.EvictOptions{StrategyName: LowNodeUtilizationPluginName},
-		l.podFilter,
+		m.podFilter,
 		resourceNames,
-		continueEvictionCond)
+		continueEvictionCond,
+	)
 
 	return nil
 }
+
+var _ frameworktypes.BalancePlugin = &MyLowNodeUtilization{}
