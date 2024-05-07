@@ -208,6 +208,14 @@ func GetResourceRealQuantity(pod *v1.Pod, resourceName v1.ResourceName) resource
 		realQuantity.Add(*quantity)
 	case v1.ResourceMemory, v1.ResourceStorage, v1.ResourceEphemeralStorage:
 		realQuantity = resource.Quantity{Format: resource.BinarySI}
+		jsonStr, _ := GetPodMemUsage(pod.Name)
+		err := json.Unmarshal([]byte(jsonStr), &resp)
+		if err != nil {
+		}
+		value, _ := resp.Data.Result[0].Value[1].(string)
+		memUsage, _ := strconv.Atoi(value)
+		quantity := resource.NewQuantity(int64(memUsage), resource.DecimalSI)
+		realQuantity.Add(*quantity)
 	default:
 		realQuantity = resource.Quantity{Format: resource.DecimalSI}
 	}
@@ -236,9 +244,9 @@ func GetPodCpuUsage(podName string) (string, error) {
 	return string(body), nil
 }
 
-func GetPodMemUsage(instance string) (string, error) {
+func GetPodMemUsage(podName string) (string, error) {
 	// 此 PromQL 查询用于计算内存使用率，可以根据实际情况调整
-	query := fmt.Sprintf(`(1 - (node_memory_MemAvailable_bytes{instance="%s:9100"} / node_memory_MemTotal_bytes{instance="%s:9100"})) * 100`, instance, instance)
+	query := fmt.Sprintf(`container_memory_usage_bytes{image="",pod="%s"}`, podName)
 	queryEncoded := url.QueryEscape(query) // 确保查询字符串被正确编码
 	promQueryURL := fmt.Sprintf("%s/api/v1/query?query=%s", promUrl, queryEncoded)
 

@@ -66,4 +66,8 @@ func TestName(t *testing.T) {
 
 func TestMem(t *testing.T) {
 	pod := test.BuildTestPod("pod-demo2", 400, 0, "n1NodeName", test.SetRSOwnerRef)
+	//usage, _ := GetPodMemUsage(pod.Name)
+	//fmt.Println(usage)
+	quantity := GetResourceRealQuantity(pod, v1.ResourceMemory)
+	fmt.Println(quantity)
 }
