@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package nodeutilization
 
 import (
 	"context"
@@ -375,8 +375,6 @@ func DoEvict(ctx context.Context, evictableNamespaces *api.Namespaces, sourceNod
 		klog.V(1).InfoS("Evicting pods based on priority, if they have same priority, they'll be evicted based on QoS tiers")
 		// sort the evictable Pods based on priority. This also sorts them based on QoS. If there are multiple pods with same priority, they are sorted based on QoS tiers.
 		podutil.SortPodsBasedOnPriorityLowToHigh(removablePods)
-		// //todo other method(ACO,PSO,MFHS)
-
 		selectEvictedPods(
 			ctx, evictableNamespaces, removablePods, node, totalAvailableUsage, taintsOfDestinationNodes, podEvictor, evictOptions, continueEviction,
 			&allPodsToEvict, &allPlacementBeforeEvict, &allPodsResourceUsage)
@@ -430,8 +428,8 @@ func DoEvict(ctx context.Context, evictableNamespaces *api.Namespaces, sourceNod
 			if podEvictor.Evict(ctx, pod, evictOptions) {
 				klog.V(3).InfoS("Evicted pods", "pod", klog.KObj(pod))
 
-				for name, quantity := range selectedNodeInfo.usage {
-					selectedNodeInfo.usage[name].Add(*quantity)
+				for name, quantity := range allPodsResourceUsage[pod] {
+					selectedNodeInfo.usage[name].Add(quantity)
 				}
 			}
 		}

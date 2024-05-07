@@ -15,6 +15,7 @@ const promUrl = "http://222.201.144.237:9091"
 
 // 100 - (avg(irate(node_cpu_seconds_total{mode='idle',instance="192.168.137.125:9100"}[5m])) by (instance) *100)
 // GetNodeMap 返回一个不可变的节点名称和 IP 地址的映射
+// todo 基于k8s api自动发现节点并根据label选择/写成配置文件Args的形式
 func GetNodeMap() map[string]string {
 	return map[string]string{
 		"vm-arm64-node1":  "192.168.137.125",
@@ -65,8 +66,8 @@ type PrometheusResponse struct {
 	} `json:"data"`
 }
 
-// ExtractCPUUsage 解析 JSON 字符串并提取 CPU 使用率值
-func ExtractCPUUsage(jsonStr string) (string, error) {
+// ExtractNodeCpuUsage 解析 JSON 字符串并提取 CPU 使用率值
+func ExtractNodeCpuUsage(jsonStr string) (string, error) {
 	var resp PrometheusResponse
 	err := json.Unmarshal([]byte(jsonStr), &resp)
 	if err != nil {
@@ -109,8 +110,8 @@ func GetNodeMemUsage(instance string) (string, error) {
 	return string(body), nil
 }
 
-// ExtractMemoryUsage 解析 JSON 字符串并提取内存使用率值
-func ExtractMemoryUsage(jsonStr string) (string, error) {
+// ExtractNodeMemoryUsage 解析 JSON 字符串并提取内存使用率值
+func ExtractNodeMemoryUsage(jsonStr string) (string, error) {
 	var resp PrometheusResponse
 	err := json.Unmarshal([]byte(jsonStr), &resp)
 	if err != nil {
@@ -161,7 +162,7 @@ func NodeUtilization(nodeName string, pods []*v1.Pod, resourceNames []v1.Resourc
 		if name != v1.ResourcePods {
 			if name == v1.ResourceCPU {
 				usage, _ := GetNodeCpuUsage(GetNodeMap()[nodeName])
-				cpuUtil, _ := ExtractCPUUsage(usage)
+				cpuUtil, _ := ExtractNodeCpuUsage(usage)
 				cpuUsage, _ := strconv.ParseFloat(cpuUtil, 64)
 				cpuUsage = cpuUsage / 100 * 8000 //实值，非百分比；todo 但规格写死了,可改为node.status.capacity或者allocatable
 				//totalReqs[name].Add()
@@ -169,9 +170,9 @@ func NodeUtilization(nodeName string, pods []*v1.Pod, resourceNames []v1.Resourc
 				totalReqs[name] = quantity
 			} else if name == v1.ResourceMemory {
 				usage, _ := GetNodeMemUsage(GetNodeMap()[nodeName])
-				memoryUtil, _ := ExtractMemoryUsage(usage)
+				memoryUtil, _ := ExtractNodeMemoryUsage(usage)
 				memUsage, _ := strconv.ParseFloat(memoryUtil, 64)
-				memUsage = memUsage / 100 * 8 * 1024 //实值，非百分比；todo 但规格写死了
+				memUsage = memUsage / 100 * 8 * 1024 * 1024 * 1024 //实值，非百分比；todo 但规格写死了
 				quantity := resource.NewQuantity(int64(memUsage), resource.BinarySI)
 				totalReqs[name] = quantity
 			}
@@ -190,6 +191,68 @@ func IsBasicResource(name v1.ResourceName) bool {
 	}
 }
 
-func GetPodCPUUsage() {
+func GetResourceRealQuantity(pod *v1.Pod, resourceName v1.ResourceName) resource.Quantity {
+	realQuantity := resource.Quantity{}
+	var resp PrometheusResponse
+	switch resourceName {
+	case v1.ResourceCPU:
+		realQuantity = resource.Quantity{Format: resource.DecimalSI}
+		jsonStr, _ := GetPodCpuUsage(pod.Name)
+		err := json.Unmarshal([]byte(jsonStr), &resp)
+		//todo 解析错误
+		if err != nil {
+		}
+		value, _ := resp.Data.Result[0].Value[1].(string)
+		cpuUsage, _ := strconv.ParseFloat(value, 64)
+		quantity := resource.NewMilliQuantity(int64(cpuUsage*1000), resource.DecimalSI)
+		realQuantity.Add(*quantity)
+	case v1.ResourceMemory, v1.ResourceStorage, v1.ResourceEphemeralStorage:
+		realQuantity = resource.Quantity{Format: resource.BinarySI}
+	default:
+		realQuantity = resource.Quantity{Format: resource.DecimalSI}
+	}
+	return realQuantity
 
+}
+
+func GetPodCpuUsage(podName string) (string, error) {
+	query := fmt.Sprintf(`irate(container_cpu_usage_seconds_total{pod="%s",container="",image=""}[1m])`, podName)
+	//query := fmt.Sprintf(`irate(node_cpu_seconds_total{mode='idle',instance="%s:9100"}[1m])) `, instance)
+	queryEncoded := url.QueryEscape(query) // 确保查询字符串被正确编码
+	promQueryURL := fmt.Sprintf("%s/api/v1/query?query=%s", promUrl, queryEncoded)
+
+	resp, err := http.Get(promQueryURL)
+	if err != nil {
+		return "", err // 无法发送请求
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err // 读取响应失败
+	}
+
+	// 响应数据存储在 body 中，你可能需要对其进行解析以获取具体的使用率值
+	return string(body), nil
+}
+
+func GetPodMemUsage(instance string) (string, error) {
+	// 此 PromQL 查询用于计算内存使用率，可以根据实际情况调整
+	query := fmt.Sprintf(`(1 - (node_memory_MemAvailable_bytes{instance="%s:9100"} / node_memory_MemTotal_bytes{instance="%s:9100"})) * 100`, instance, instance)
+	queryEncoded := url.QueryEscape(query) // 确保查询字符串被正确编码
+	promQueryURL := fmt.Sprintf("%s/api/v1/query?query=%s", promUrl, queryEncoded)
+
+	resp, err := http.Get(promQueryURL)
+	if err != nil {
+		return "", err // 无法发送请求
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err // 读取响应失败
+	}
+
+	// 响应数据存储在 body 中，你可能需要对其进行解析以获取具体的使用率值
+	return string(body), nil
 }
