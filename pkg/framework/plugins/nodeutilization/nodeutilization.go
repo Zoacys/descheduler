@@ -268,6 +268,68 @@ func evictPodsFromSourceNodes(
 			if _, ok := totalAvailableUsage[name]; !ok {
 				totalAvailableUsage[name] = resource.NewQuantity(0, resource.DecimalSI)
 			}
+			totalAvailableUsage[name].Add(*node.thresholds.highResourceThreshold[name])
+			totalAvailableUsage[name].Sub(*node.usage[name])
+		}
+	}
+
+	// log message in one line
+	keysAndValues := []interface{}{
+		"CPU", totalAvailableUsage[v1.ResourceCPU].MilliValue(),
+		"Mem", totalAvailableUsage[v1.ResourceMemory].Value(),
+		"Pods", totalAvailableUsage[v1.ResourcePods].Value(),
+	}
+	for name := range totalAvailableUsage {
+		if !node.IsBasicResource(name) {
+			keysAndValues = append(keysAndValues, string(name), totalAvailableUsage[name].Value())
+		}
+	}
+	klog.V(1).InfoS("Total capacity to be moved", keysAndValues...)
+
+	for _, node := range sourceNodes {
+		klog.V(3).InfoS("Evicting pods from node", "node", klog.KObj(node.node), "usage", node.usage)
+
+		nonRemovablePods, removablePods := classifyPods(node.allPods, podFilter)
+		klog.V(2).InfoS("Pods on node", "node", klog.KObj(node.node), "allPods", len(node.allPods), "nonRemovablePods", len(nonRemovablePods), "removablePods", len(removablePods))
+
+		if len(removablePods) == 0 {
+			klog.V(1).InfoS("No removable pods on node, try next node", "node", klog.KObj(node.node))
+			continue
+		}
+
+		klog.V(1).InfoS("Evicting pods based on priority, if they have same priority, they'll be evicted based on QoS tiers")
+		// sort the evictable Pods based on priority. This also sorts them based on QoS. If there are multiple pods with same priority, they are sorted based on QoS tiers.
+		podutil.SortPodsBasedOnPriorityLowToHigh(removablePods)
+		evictPods(ctx, evictableNamespaces, removablePods, node, totalAvailableUsage, taintsOfDestinationNodes, podEvictor, evictOptions, continueEviction)
+
+	}
+}
+
+func evictPodsFromSourceNodes_(
+	ctx context.Context,
+	evictableNamespaces *api.Namespaces,
+	sourceNodes, destinationNodes []NodeInfo,
+	podEvictor frameworktypes.Evictor,
+	evictOptions evictions.EvictOptions,
+	podFilter func(pod *v1.Pod) bool,
+	resourceNames []v1.ResourceName,
+	continueEviction continueEvictionCond,
+) {
+	// upper bound on total number of pods/cpu/memory and optional extended resources to be moved
+	totalAvailableUsage := map[v1.ResourceName]*resource.Quantity{
+		v1.ResourcePods:   {},
+		v1.ResourceCPU:    {},
+		v1.ResourceMemory: {},
+	}
+
+	taintsOfDestinationNodes := make(map[string][]v1.Taint, len(destinationNodes))
+	for _, node := range destinationNodes {
+		taintsOfDestinationNodes[node.node.Name] = node.node.Spec.Taints
+
+		for _, name := range resourceNames {
+			if _, ok := totalAvailableUsage[name]; !ok {
+				totalAvailableUsage[name] = resource.NewQuantity(0, resource.DecimalSI)
+			}
 			// + target - current
 			totalAvailableUsage[name].Add(*node.thresholds.highResourceThreshold[name])
 			totalAvailableUsage[name].Sub(*node.usage[name])
@@ -360,11 +422,18 @@ func DoEvict(ctx context.Context, evictableNamespaces *api.Namespaces, sourceNod
 		if selectedNode == nil {
 			failedPods = append(failedPods, pod)
 		} else {
+			// 选择成功，修改Pod 的nodeSelector指定
 			targetHostMaping[pod] = selectedNode
-			pod.Spec.NodeSelector
-			//pod.Spec.NodeSelector
-			//selectedNodeInfo
+			// e.g. nodeName=vm-arm64-node1; kubernetes.io/hostname=vm-arm64-node1
+			pod.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": selectedNode.Name}
+			// 执行驱逐
+			if podEvictor.Evict(ctx, pod, evictOptions) {
+				klog.V(3).InfoS("Evicted pods", "pod", klog.KObj(pod))
 
+				for name, quantity := range selectedNodeInfo.usage {
+					selectedNodeInfo.usage[name].Add(*quantity)
+				}
+			}
 		}
 	}
 	klog.V(1).InfoS("目的主机选择结束")
@@ -393,7 +462,6 @@ func selectEvictedPods(
 	if evictableNamespaces != nil {
 		excludedNamespaces = sets.New(evictableNamespaces.Exclude...)
 	}
-	klog.V(1).InfoS("待迁移pod选择开始")
 
 	// 确定待迁移pod
 	if continueEviction(nodeInfo, totalAvailableUsage) {
@@ -464,8 +532,79 @@ func selectEvictedPods(
 	//klog.V(1).InfoS("目标节点选择结束")
 
 }
-
 func evictPods(
+	ctx context.Context,
+	evictableNamespaces *api.Namespaces,
+	inputPods []*v1.Pod,
+	nodeInfo NodeInfo,
+	totalAvailableUsage map[v1.ResourceName]*resource.Quantity,
+	taintsOfLowNodes map[string][]v1.Taint,
+	podEvictor frameworktypes.Evictor,
+	evictOptions evictions.EvictOptions,
+	continueEviction continueEvictionCond,
+) {
+	var excludedNamespaces sets.Set[string]
+	if evictableNamespaces != nil {
+		excludedNamespaces = sets.New(evictableNamespaces.Exclude...)
+	}
+
+	if continueEviction(nodeInfo, totalAvailableUsage) {
+		for _, pod := range inputPods {
+			if !utils.PodToleratesTaints(pod, taintsOfLowNodes) {
+				klog.V(3).InfoS("Skipping eviction for pod, doesn't tolerate node taint", "pod", klog.KObj(pod))
+				continue
+			}
+
+			preEvictionFilterWithOptions, err := podutil.NewOptions().
+				WithFilter(podEvictor.PreEvictionFilter).
+				WithoutNamespaces(excludedNamespaces).
+				BuildFilterFunc()
+			if err != nil {
+				klog.ErrorS(err, "could not build preEvictionFilter with namespace exclusion")
+				continue
+			}
+
+			if preEvictionFilterWithOptions(pod) {
+				if podEvictor.Evict(ctx, pod, evictOptions) {
+					klog.V(3).InfoS("Evicted pods", "pod", klog.KObj(pod))
+
+					for name := range totalAvailableUsage {
+						if name == v1.ResourcePods {
+							nodeInfo.usage[name].Sub(*resource.NewQuantity(1, resource.DecimalSI))
+							totalAvailableUsage[name].Sub(*resource.NewQuantity(1, resource.DecimalSI))
+						} else {
+							quantity := utils.GetResourceRequestQuantity(pod, name)
+							nodeInfo.usage[name].Sub(quantity)
+							totalAvailableUsage[name].Sub(quantity)
+						}
+					}
+
+					keysAndValues := []interface{}{
+						"node", nodeInfo.node.Name,
+						"CPU", nodeInfo.usage[v1.ResourceCPU].MilliValue(),
+						"Mem", nodeInfo.usage[v1.ResourceMemory].Value(),
+						"Pods", nodeInfo.usage[v1.ResourcePods].Value(),
+					}
+					for name := range totalAvailableUsage {
+						if !nodeutil.IsBasicResource(name) {
+							keysAndValues = append(keysAndValues, string(name), totalAvailableUsage[name].Value())
+						}
+					}
+
+					klog.V(3).InfoS("Updated node usage", keysAndValues...)
+					// check if pods can be still evicted
+					if !continueEviction(nodeInfo, totalAvailableUsage) {
+						break
+					}
+				}
+			}
+			if podEvictor.NodeLimitExceeded(nodeInfo.node) {
+				return
+			}
+		}
+	}
+}
+func evictPods_(
 	ctx context.Context,
 	evictableNamespaces *api.Namespaces,
 	inputPods []*v1.Pod,

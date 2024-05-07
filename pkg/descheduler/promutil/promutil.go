@@ -30,8 +30,8 @@ func GetNodeMap() map[string]string {
 	}
 }
 
-// GetCPUUsage 通过 Prometheus 查询计算指定实例的 CPU 使用率
-func GetCPUUsage(instance string) (string, error) {
+// GetNodeCpuUsage 通过 Prometheus 查询计算指定实例的 CPU 使用率
+func GetNodeCpuUsage(instance string) (string, error) {
 	query := fmt.Sprintf(`100 - (avg(irate(node_cpu_seconds_total{mode='idle',instance="%s:9100"}[1m])) by (instance) * 100)`, instance)
 	queryEncoded := url.QueryEscape(query) // 确保查询字符串被正确编码
 	promQueryURL := fmt.Sprintf("%s/api/v1/query?query=%s", promUrl, queryEncoded)
@@ -87,8 +87,8 @@ func ExtractCPUUsage(jsonStr string) (string, error) {
 	return value, nil
 }
 
-// GetMemoryUsage 通过 Prometheus 查询计算指定实例的内存使用率
-func GetMemoryUsage(instance string) (string, error) {
+// GetNodeMemUsage 通过 Prometheus 查询计算指定实例的内存使用率
+func GetNodeMemUsage(instance string) (string, error) {
 	// 此 PromQL 查询用于计算内存使用率，可以根据实际情况调整
 	query := fmt.Sprintf(`(1 - (node_memory_MemAvailable_bytes{instance="%s:9100"} / node_memory_MemTotal_bytes{instance="%s:9100"})) * 100`, instance, instance)
 	queryEncoded := url.QueryEscape(query) // 确保查询字符串被正确编码
@@ -160,15 +160,15 @@ func NodeUtilization(nodeName string, pods []*v1.Pod, resourceNames []v1.Resourc
 		//quantity, ok := req[name]
 		if name != v1.ResourcePods {
 			if name == v1.ResourceCPU {
-				usage, _ := GetCPUUsage(GetNodeMap()[nodeName])
+				usage, _ := GetNodeCpuUsage(GetNodeMap()[nodeName])
 				cpuUtil, _ := ExtractCPUUsage(usage)
 				cpuUsage, _ := strconv.ParseFloat(cpuUtil, 64)
-				cpuUsage = cpuUsage / 100 * 8000 //实值，非百分比；todo 但规格写死了
+				cpuUsage = cpuUsage / 100 * 8000 //实值，非百分比；todo 但规格写死了,可改为node.status.capacity或者allocatable
 				//totalReqs[name].Add()
 				quantity := resource.NewMilliQuantity(int64(cpuUsage), resource.DecimalSI)
 				totalReqs[name] = quantity
 			} else if name == v1.ResourceMemory {
-				usage, _ := GetMemoryUsage(GetNodeMap()[nodeName])
+				usage, _ := GetNodeMemUsage(GetNodeMap()[nodeName])
 				memoryUtil, _ := ExtractMemoryUsage(usage)
 				memUsage, _ := strconv.ParseFloat(memoryUtil, 64)
 				memUsage = memUsage / 100 * 8 * 1024 //实值，非百分比；todo 但规格写死了
@@ -188,4 +188,8 @@ func IsBasicResource(name v1.ResourceName) bool {
 	default:
 		return false
 	}
+}
+
+func GetPodCPUUsage() {
+
 }

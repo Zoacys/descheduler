@@ -35,6 +35,8 @@ type LowNodeUtilizationArgs struct {
 	EvictableNamespaces *api.Namespaces `json:"evictableNamespaces"`
 }
 
+//todo LowNodeUtilizationArgs
+
 // +k8s:deepcopy-gen=true
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 

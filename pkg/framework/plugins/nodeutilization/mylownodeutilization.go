@@ -18,6 +18,8 @@ type MyLowNodeUtilization struct {
 	podFilter func(pod *v1.Pod) bool
 }
 
+var _ frameworktypes.BalancePlugin = &MyLowNodeUtilization{}
+
 func (m *MyLowNodeUtilization) Name() string {
 	return MyLowNodeUtilizationPluginName
 }
@@ -140,7 +142,7 @@ func (m *MyLowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *f
 	}
 	sortNodesByUsage(sourceNodes, false)
 
-	evictPodsFromSourceNodes(
+	evictPodsFromSourceNodes_(
 		ctx,
 		m.args.EvictableNamespaces,
 		sourceNodes,
@@ -154,5 +156,3 @@ func (m *MyLowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *f
 
 	return nil
 }
-
-var _ frameworktypes.BalancePlugin = &MyLowNodeUtilization{}
