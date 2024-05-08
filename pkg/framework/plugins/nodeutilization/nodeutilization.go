@@ -161,7 +161,7 @@ func getNodeUsage_(
 
 		nodeUsageList = append(nodeUsageList, NodeUsage{
 			node:  node,
-			usage: promutil.NodeUtilization(node.Name, pods, resourceNames),
+			usage: promutil.NodeUtilization(node, pods, resourceNames),
 			//usage: Node.NodeUtilization(pods,resourceNames),
 			allPods: pods,
 		})

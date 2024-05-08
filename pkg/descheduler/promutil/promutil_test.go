@@ -71,3 +71,13 @@ func TestMem(t *testing.T) {
 	quantity := GetResourceRealQuantity(pod, v1.ResourceMemory)
 	fmt.Println(quantity)
 }
+func TestNode1(t *testing.T) {
+	usage, _ := GetNodeMemUsage(GetNodeMap()["192.168.137.103"])
+	memoryUtil, _ := ExtractNodeMemoryUsage(usage)
+	fmt.Println(memoryUtil)
+	memUsage, _ := strconv.ParseFloat(memoryUtil, 64)
+	memUsage = memUsage / 100 * 16 * 1024 * 1024 * 1024 //实值，非百分比；todo 但规格写死了
+	quantity := resource.NewQuantity(int64(memUsage), resource.BinarySI)
+	//totalReqs[name] = quantity
+	fmt.Println(quantity)
+}

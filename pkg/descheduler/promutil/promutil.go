@@ -145,7 +145,7 @@ func ExtractNodeMemoryUsage(jsonStr string) (string, error) {
 //		}
 //
 // }
-func NodeUtilization(nodeName string, pods []*v1.Pod, resourceNames []v1.ResourceName) map[v1.ResourceName]*resource.Quantity {
+func NodeUtilization(node *v1.Node, pods []*v1.Pod, resourceNames []v1.ResourceName) map[v1.ResourceName]*resource.Quantity {
 	totalReqs := map[v1.ResourceName]*resource.Quantity{
 		v1.ResourceCPU:    resource.NewMilliQuantity(0, resource.DecimalSI),
 		v1.ResourceMemory: resource.NewQuantity(0, resource.BinarySI),
@@ -161,18 +161,21 @@ func NodeUtilization(nodeName string, pods []*v1.Pod, resourceNames []v1.Resourc
 		//quantity, ok := req[name]
 		if name != v1.ResourcePods {
 			if name == v1.ResourceCPU {
-				usage, _ := GetNodeCpuUsage(GetNodeMap()[nodeName])
+				usage, _ := GetNodeCpuUsage(GetNodeMap()[node.Name])
 				cpuUtil, _ := ExtractNodeCpuUsage(usage)
 				cpuUsage, _ := strconv.ParseFloat(cpuUtil, 64)
-				cpuUsage = cpuUsage / 100 * 8000 //实值，非百分比；todo 但规格写死了,可改为node.status.capacity或者allocatable
+				v, _ := node.Status.Capacity.Name(v1.ResourceCPU, resource.DecimalSI).AsInt64()
+				cpuUsage = cpuUsage / 100 * 1000 * float64(v) //实值，非百分比；todo 但规格写死了,可改为node.status.capacity或者allocatable
 				//totalReqs[name].Add()
 				quantity := resource.NewMilliQuantity(int64(cpuUsage), resource.DecimalSI)
 				totalReqs[name] = quantity
 			} else if name == v1.ResourceMemory {
-				usage, _ := GetNodeMemUsage(GetNodeMap()[nodeName])
+				usage, _ := GetNodeMemUsage(GetNodeMap()[node.Name])
 				memoryUtil, _ := ExtractNodeMemoryUsage(usage)
 				memUsage, _ := strconv.ParseFloat(memoryUtil, 64)
-				memUsage = memUsage / 100 * 16 * 1024 * 1024 * 1024 //实值，非百分比；todo 但规格写死了
+				v, _ := node.Status.Capacity.Name(v1.ResourceMemory, resource.BinarySI).AsInt64()
+				memUsage = memUsage / 100 * float64(v) * 1024 * 1024
+				//memUsage = memUsage / 100 * 15.58 * 1024 * 1024  //实值，非百分比；todo 但规格写死了
 				quantity := resource.NewQuantity(int64(memUsage), resource.BinarySI)
 				totalReqs[name] = quantity
 			}
