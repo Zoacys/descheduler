@@ -56,7 +56,8 @@ func (m *MyLowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *f
 	klog.V(1).InfoS("自定义插件启动成功")
 
 	klog.V(1).InfoS("node capacity 信息")
-	fmt.Printf(nodes[0].Status.String())
+	klog.V(1).InfoS(nodes[0].Status.String())
+
 	klog.V(1).InfoS("node capacity 信息")
 
 	// check if Pods/CPU/Mem are set, if not, set them to 100
