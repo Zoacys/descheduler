@@ -174,7 +174,7 @@ func NodeUtilization(node *v1.Node, pods []*v1.Pod, resourceNames []v1.ResourceN
 				memoryUtil, _ := ExtractNodeMemoryUsage(usage)
 				memUsage, _ := strconv.ParseFloat(memoryUtil, 64)
 				v, _ := node.Status.Capacity.Name(v1.ResourceMemory, resource.BinarySI).AsInt64()
-				memUsage = memUsage / 100 * float64(v) * 1024 * 1024
+				memUsage = memUsage / 100 * float64(v)
 				//memUsage = memUsage / 100 * 15.58 * 1024 * 1024  //实值，非百分比；todo 但规格写死了
 				quantity := resource.NewQuantity(int64(memUsage), resource.BinarySI)
 				totalReqs[name] = quantity
