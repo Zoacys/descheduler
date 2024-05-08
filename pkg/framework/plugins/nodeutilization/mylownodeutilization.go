@@ -2,11 +2,14 @@ package nodeutilization
 
 import (
 	"context"
+	"fmt"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
+	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	frameworktypes "sigs.k8s.io/descheduler/pkg/framework/types"
 )
 
@@ -20,6 +23,27 @@ type MyLowNodeUtilization struct {
 
 var _ frameworktypes.BalancePlugin = &MyLowNodeUtilization{}
 
+func NewMyLowNodeUtilization(args runtime.Object, handle frameworktypes.Handle) (frameworktypes.Plugin, error) {
+	lowNodeUtilizationArgsArgs, ok := args.(*LowNodeUtilizationArgs)
+	if !ok {
+		return nil, fmt.Errorf("want args to be of type LowNodeUtilizationArgs, got %T", args)
+	}
+	podFilter, err := podutil.NewOptions().
+		WithFilter(handle.Evictor().Filter).
+		BuildFilterFunc()
+
+	if err != nil {
+		return nil, fmt.Errorf("error initializing pod filter function: %v", err)
+	}
+
+	return &MyLowNodeUtilization{
+		handle:    handle,
+		args:      lowNodeUtilizationArgsArgs,
+		podFilter: podFilter,
+	}, nil
+
+}
+
 func (m *MyLowNodeUtilization) Name() string {
 	return MyLowNodeUtilizationPluginName
 }
@@ -28,6 +52,8 @@ func (m *MyLowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *f
 	useDeviationThresholds := m.args.UseDeviationThresholds
 	thresholds := m.args.Thresholds
 	targetThresholds := m.args.TargetThresholds
+
+	klog.V(1).InfoS("自定义插件启动成功")
 
 	// check if Pods/CPU/Mem are set, if not, set them to 100
 	if _, ok := thresholds[v1.ResourcePods]; !ok {
