@@ -11,6 +11,7 @@ import (
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	frameworktypes "sigs.k8s.io/descheduler/pkg/framework/types"
+	"strconv"
 )
 
 const MyLowNodeUtilizationPluginName = "MyLowNodeUtilization"
@@ -62,6 +63,8 @@ func (m *MyLowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *f
 
 	cpu := nodes[0].Status.Capacity.Name(v1.ResourceCPU, resource.DecimalSI)
 	klog.V(1).InfoS(cpu.String())
+	asInt64, _ := cpu.AsInt64()
+	klog.V(1).InfoS(strconv.FormatInt(asInt64, 10))
 	klog.V(1).InfoS("node capacity 信息")
 
 	// check if Pods/CPU/Mem are set, if not, set them to 100

@@ -81,3 +81,11 @@ func TestNode1(t *testing.T) {
 	//totalReqs[name] = quantity
 	fmt.Println(quantity)
 }
+
+func Test2(t *testing.T) {
+	pod := test.BuildTestPod("pod-demo2", 400, 0, "n1NodeName", test.SetRSOwnerRef)
+	quantity := GetResourceRealQuantity(pod, v1.ResourceCPU)
+	fmt.Println(quantity)
+	realQuantity := GetResourceRealQuantity(pod, v1.ResourceMemory)
+	fmt.Println(realQuantity)
+}

@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/klog/v2"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -164,8 +165,7 @@ func NodeUtilization(node *v1.Node, pods []*v1.Pod, resourceNames []v1.ResourceN
 				usage, _ := GetNodeCpuUsage(GetNodeMap()[node.Name])
 				cpuUtil, _ := ExtractNodeCpuUsage(usage)
 				cpuUsage, _ := strconv.ParseFloat(cpuUtil, 64)
-				v, _ := node.Status.Capacity.Name(v1.ResourceCPU, resource.DecimalSI).AsInt64()
-				cpuUsage = cpuUsage / 100 * 1000 * float64(v) //实值，非百分比；todo 但规格写死了,可改为node.status.capacity或者allocatable
+				cpuUsage = cpuUsage / 100 * 1000 * node.Status.Capacity.Name(v1.ResourceCPU, resource.DecimalSI).AsApproximateFloat64()
 				//totalReqs[name].Add()
 				quantity := resource.NewMilliQuantity(int64(cpuUsage), resource.DecimalSI)
 				totalReqs[name] = quantity
@@ -173,8 +173,8 @@ func NodeUtilization(node *v1.Node, pods []*v1.Pod, resourceNames []v1.ResourceN
 				usage, _ := GetNodeMemUsage(GetNodeMap()[node.Name])
 				memoryUtil, _ := ExtractNodeMemoryUsage(usage)
 				memUsage, _ := strconv.ParseFloat(memoryUtil, 64)
-				v, _ := node.Status.Capacity.Name(v1.ResourceMemory, resource.BinarySI).AsInt64()
-				memUsage = memUsage / 100 * float64(v)
+				//v, _ := node.Status.Capacity.Name(v1.ResourceMemory, resource.BinarySI).AsInt64()
+				memUsage = memUsage / 100 * node.Status.Capacity.Name(v1.ResourceMemory, resource.BinarySI).AsApproximateFloat64()
 				//memUsage = memUsage / 100 * 15.58 * 1024 * 1024  //实值，非百分比；todo 但规格写死了
 				quantity := resource.NewQuantity(int64(memUsage), resource.BinarySI)
 				totalReqs[name] = quantity
@@ -217,11 +217,12 @@ func GetResourceRealQuantity(pod *v1.Pod, resourceName v1.ResourceName) resource
 		}
 		value, _ := resp.Data.Result[0].Value[1].(string)
 		memUsage, _ := strconv.Atoi(value)
-		quantity := resource.NewQuantity(int64(memUsage), resource.DecimalSI)
+		quantity := resource.NewQuantity(int64(memUsage), resource.BinarySI)
 		realQuantity.Add(*quantity)
 	default:
 		realQuantity = resource.Quantity{Format: resource.DecimalSI}
 	}
+	klog.V(1).Info()
 	return realQuantity
 
 }
